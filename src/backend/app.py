@@ -1,7 +1,7 @@
 
 
 from flask import Flask, jsonify
-import cx_Oracle
+import oracledb
 import os
 
 app = Flask(__name__)
@@ -13,8 +13,8 @@ DB_HOST = os.getenv('DB_HOST')
 DB_SERVICE = os.getenv('DB_SERVICE')
 
 def get_db_connection():
-    dsn = cx_Oracle.makedsn(DB_HOST, 1521, service_name=DB_SERVICE)
-    connection = cx_Oracle.connect(user=DB_USER, password=DB_PASSWORD, dsn=dsn)
+    dsn = oracledb.makedsn(DB_HOST, 1521, service_name=DB_SERVICE)
+    connection = oracledb.connect(user=DB_USER, password=DB_PASSWORD, dsn=dsn)
     return connection
 
 @app.route('/')
