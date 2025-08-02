@@ -14,7 +14,7 @@ resource "oci_core_instance" "webapp_instance" {
     assign_public_ip = true
     #ostname_label   = "webapp"
   }
-
+ 
   metadata = {
     ssh_authorized_keys = var.ssh_public_key
     user_data = base64encode(templatefile("${path.module}/user_data.sh", {
@@ -59,7 +59,21 @@ resource "oci_core_network_security_group_security_rule" "webapp_nsg_rule_http" 
     }
   }
 }
+resource "null_resource" "copy_wallet" {
+  depends_on = [oci_core_instance.webapp_instance]
 
+  provisioner "file" {
+    source      = "${path.module}/wallet.zip"
+    destination = "/tmp/wallet.zip"
+
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file("${path.module}/Private.ppk")
+      host        = oci_core_instance.webapp_instance.public_ip
+    }
+  }
+}
 data "oci_core_subnet" "public_subnet" {
   subnet_id = var.subnet_id
 }

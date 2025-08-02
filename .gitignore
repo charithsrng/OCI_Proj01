@@ -15,4 +15,4 @@ jenkins/home/
 # Python
 __pycache__/
 *.pyc
-EOF
+EOFterraform/modules/compute/Private.ppk 

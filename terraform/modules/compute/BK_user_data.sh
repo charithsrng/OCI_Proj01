@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# Update system
 set -e
 LOG=/var/log/webapp-setup.log
 exec > >(tee -a "$LOG") 2>&1
@@ -9,36 +8,64 @@ echo "[INFO] System update..."
 apt-get update
 apt-get upgrade -y
 
-# Install required packages
 echo "[INFO] Installing packages..."
-apt-get install -y python3 python3-pip python3-venv git nginx
+apt-get install -y python3 python3-pip python3-venv git nginx unzip
 
-# Clone the repository
 echo "[INFO] Cloning repo..."
 git clone --branch main --single-branch https://github.com/charithsrng/OCI_Proj01.git /opt/webapp
 
-# Set up virtual environment
 echo "[INFO] Creating Python venv..."
 python3 -m venv /opt/webapp/venv
 source /opt/webapp/venv/bin/activate
 
-# Install Python dependencies
 echo "[INFO] Installing Python requirements..."
+pip install --upgrade pip
 pip install -r /opt/webapp/src/backend/requirements.txt
-# Wait for /tmp/wallet.zip to appear (uploaded via Terraform file provisioner)
-for i in {1..20}; do
-  if [ -f /tmp/wallet.zip ]; then
-    echo "[INFO] Found wallet.zip"
-    mkdir -p /opt/webapp/wallet
-    unzip /tmp/wallet.zip -d /opt/webapp/wallet
-    break
-  else
-    echo "[INFO] Waiting for wallet.zip..."
-    sleep 3
-  fi
-done
 
-# Create systemd service for Flask app
+echo "[INFO] Running initial SQL script..."
+cat > /opt/webapp/init_db.py <<EOF
+import oracledb
+
+oracledb.init_oracle_client(config_dir="/opt/webapp/wallet")
+
+conn = oracledb.connect(
+    user="${db_user}",
+    password="${db_password}",
+    dsn="${db_service}"
+)
+
+cursor = conn.cursor()
+
+cursor.execute(\"""
+BEGIN
+    EXECUTE IMMEDIATE 'CREATE TABLE employees (
+        employee_id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        name VARCHAR2(100),
+        department VARCHAR2(100),
+        salary NUMBER
+    )';
+EXCEPTION
+    WHEN OTHERS THEN
+        IF SQLCODE != -955 THEN RAISE; END IF;
+END;
+\""")  # Safe re-creation
+
+cursor.executemany(
+    "INSERT INTO employees (name, department, salary) VALUES (:1, :2, :3)",
+    [
+        ("John Doe", "IT", 75000),
+        ("Jane Smith", "HR", 65000),
+        ("Bob Johnson", "Finance", 85000),
+    ]
+)
+
+conn.commit()
+conn.close()
+print("✅ Initialized employee table.")
+EOF
+
+/opt/webapp/venv/bin/python /opt/webapp/init_db.py
+
 echo "[INFO] Creating systemd service..."
 cat > /etc/systemd/system/webapp.service <<EOF
 [Unit]
@@ -48,31 +75,21 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=/opt/webapp/src/backend
-
-# --- Environment Variables for ADB ---
-# DB_SERVICE is the net service name from tnsnames.ora (e.g., myadb_medium)
+Environment="DB_HOST=${db_host}"
 Environment="DB_SERVICE=${db_service}"
-echo "${db_service}"
 Environment="DB_USER=${db_user}"
 Environment="DB_PASSWORD=${db_password}"
-
-# Add the path to your unzipped wallet directory
-Environment="WALLET_DIR=/opt/webapp/wallet"
-
 ExecStart=/opt/webapp/venv/bin/python /opt/webapp/src/backend/app.py
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
-
 EOF
 
-# Enable and start the service
 systemctl daemon-reload
 systemctl enable webapp
 systemctl start webapp
 
-# Configure Nginx as reverse proxy
 echo "[INFO] Configuring Nginx reverse proxy..."
 cat > /etc/nginx/sites-available/webapp <<EOF
 server {
@@ -91,4 +108,5 @@ EOF
 ln -s /etc/nginx/sites-available/webapp /etc/nginx/sites-enabled
 rm /etc/nginx/sites-enabled/default
 systemctl restart nginx
+
 echo "[INFO] Setup complete at $(date)"
